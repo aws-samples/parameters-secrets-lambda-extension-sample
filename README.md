@@ -2,7 +2,7 @@
 
 This project contains source code and supporting files for deploying resources described in following blog: 
 
-**Using the AWS Parameter and Secrets Lambda extension to cache parameters and secrets**
+[Using the AWS Parameter and Secrets Lambda extension to cache parameters and secrets](https://aws.amazon.com/blogs/compute/using-the-aws-parameter-and-secrets-lambda-extension-to-cache-parameters-and-secrets/)
 
 - sample-code - Code for the sample Lambda function.
 - template.yaml - A template that defines the AWS resources used in the example.

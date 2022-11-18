@@ -1,0 +1,338 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description:  This template deploys a VPC, with a pair of public and private subnets spread across two Availability Zones along with other VPC resources such as NAT Gateway, route tables etc. It deploys an Multi-AZ RDS instance, SSM Parameter and a Secret Manager secret. 
+Parameters:
+  pVpcCIDR:
+    Description: Enter the IP range (CIDR notation) for the VPC
+    Type: String
+    Default: 172.31.0.0/16
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$'
+  pPublicSubnetCIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet
+    Type: String
+    Default: 172.31.3.0/24
+  pPrivateSubnetACIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet A
+    Type: String
+    Default: 172.31.2.0/24
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$'
+  pPrivateSubnetBCIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet B
+    Type: String
+    Default: 172.31.1.0/24
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$'
+  pDatabaseName:
+    Default: DemoAppDatabase
+    Description: Database name for PROD environment
+    Type: String
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: Begin with a letter and use only alphanumeric characters.
+  pDatabaseUsername:
+    Default: myadmin
+    Description: Database username for PROD environment
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: Begin with a letter and use only alphanumeric characters.
+  pDBEngineVersion:
+    Default: '5.7'
+    Type: String
+    Description: The version number of the database engine to use.
+  # pParameterSecretExtensionARN:
+  #   Type: String
+  #   Description: ARN of AWS Parameter and Secrets Extension
+  #   Default: 'arn:aws:lambda:us-west-1:997803712105:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2'
+Globals:
+  Function:
+    Timeout: 3
+Resources:
+  rVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref pVpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: DemoVPC      
+  rInternetGateway:
+    Type: AWS::EC2::InternetGateway
+  rInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref rInternetGateway
+      VpcId: !Ref rVPC
+  rPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref rVPC
+      AvailabilityZone:
+        Fn::Select: 
+          - 0
+          - Fn::GetAZs: ""      
+      CidrBlock: !Ref pPublicSubnetCIDR
+      # MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: DemoVPC-PublicSubnet       
+  rPrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref rVPC
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Fn::GetAZs: ""
+      CidrBlock: !Ref pPrivateSubnetACIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: DemoVPC-PrivateSubnetA      
+  rPrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref rVPC
+      AvailabilityZone:
+        Fn::Select: 
+          - 1
+          - Fn::GetAZs: ""      
+      CidrBlock: !Ref pPrivateSubnetBCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: DemoVPC-PrivateSubnetB
+  rNatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: rInternetGatewayAttachment
+    Properties:
+      Domain: vpc
+  rNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt rNatGatewayEIP.AllocationId
+      SubnetId: !Ref rPublicSubnet
+  rPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref rVPC
+  rDefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: rInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref rPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref rInternetGateway
+  rPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref rPublicRouteTable
+      SubnetId: !Ref rPublicSubnet
+  rPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref rVPC
+  rDefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref rPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref rNatGateway
+  rPrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref rPrivateRouteTable
+      SubnetId: !Ref rPrivateSubnetA
+  rPrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref rPrivateRouteTable
+      SubnetId: !Ref rPrivateSubnetB
+  rRDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group allows inbound access to Amazon RDS"
+      VpcId: !Ref rVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref pVpcCIDR
+          Description: "Rule allows inbound access on port 3306"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: "Rule allows outbound access for Lambda to connect to Parameter and secrets endpoint"
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref pVpcCIDR
+          Description: "Rule allows outbound access for RDS instance"          
+  rDatabaseSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Description: "This secret has a dynamically generated secret password."
+      GenerateSecretString:
+        SecretStringTemplate: !Join [ '', [ '{"username": "', !Ref pDatabaseUsername, '"}' ] ]
+        GenerateStringKey: "password"
+        PasswordLength: 30
+        ExcludeCharacters: '"@/\'
+  rDatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    DependsOn: rVPC
+    Properties:
+      DBSubnetGroupDescription: Subnets
+      SubnetIds:
+        - !Ref rPrivateSubnetA
+        - !Ref rPrivateSubnetB
+      Tags:
+      - Key: Name
+
+        Value: DemoSubnetGroup
+  rDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref pDatabaseName
+      DBInstanceIdentifier: !Ref pDatabaseName
+      AllocatedStorage: '10'
+      DBInstanceClass: db.t2.small
+      Engine: MySQL
+      EngineVersion: !Ref pDBEngineVersion
+      MasterUsername: 
+        Fn::Sub: '{{resolve:secretsmanager:${rDatabaseSecret}:SecretString:username}}'
+      MasterUserPassword:
+        Fn::Sub: '{{resolve:secretsmanager:${rDatabaseSecret}:SecretString:password}}'
+      MultiAZ: true
+      DBSubnetGroupName: !Ref rDatabaseSubnetGroup
+      StorageEncrypted: true
+      DeletionProtection: false
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+      - !Ref rRDSSecurityGroup
+  rDatabaseSecretUpdate:
+    Type: "AWS::SecretsManager::SecretTargetAttachment"
+    Properties:
+      SecretId: !Ref rDatabaseSecret
+      TargetId: !Ref rDatabase
+      TargetType: AWS::RDS::DBInstance
+  rSampleParameter:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: "Sample dev config values for demo app"
+      Tier: Standard
+      Type: String
+      Name: /dev/demoApp/app_config
+      Value: '{"enableVersion":true,"version":1,"app":"DemoApp"}'
+  rLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      # RoleName: DemoAppLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: This role is used by the Lambda function
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies: 
+        - PolicyName: secretsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource:
+                  - !Ref rDatabaseSecret
+        - PolicyName: parametersPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameter'
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${rSampleParameter}'
+  rLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: sample-code/
+      Handler: lambda.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Role: !GetAtt rLambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt rRDSSecurityGroup.GroupId
+        SubnetIds:
+          - !Ref rPrivateSubnetA
+          - !Ref rPrivateSubnetB 
+      # Layers: 
+      #   - !Ref pParameterSecretExtensionARN
+      Environment:
+        Variables:
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: 2773
+          CREDS_PATH: !Ref rDatabaseSecret 
+          APP_CONFIG_PATH: demoApp/app_config
+          ENV: dev
+          SSM_PARAMETER_STORE_TTL: 120
+          SECRETS_MANAGER_TTL: 120
+Outputs:
+  oLambdaFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt rLambdaFunction.Arn
+  oVpcId:
+    Description: A reference to the created rVPC
+    Value: !Ref rVPC
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","vpc-id"]]
+  oPublicSubnet:
+    Description: A reference to the public subnet 
+    Value: !Ref rPublicSubnet
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","public-subnet"]]
+  oPrivateSubnetA:
+    Description: A reference to the private subnet A
+    Value: !Ref rPrivateSubnetA
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","private-subnet"]]
+  oPrivateSubnetB:
+    Description: A reference to the private subnet A
+    Value: !Ref rPrivateSubnetB
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","private-subnet-b"]]
+  oRDSSecurityGroup:
+    Description: Security group allowing access on MySQL port 
+    Value: !Ref rRDSSecurityGroup
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","rds-vpc-sg"]]
+  oDatabaseName:
+    Description: PROD Database name
+    Value: !Ref pDatabaseName
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","db-name"]]
+  oSampleParameter:
+    Description: "SSM Parameter Store parameter with sample config "
+    Value: !Ref rSampleParameter
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","parameter-name"]]
+  oLambdaExecutionRole:
+    Description: Role to be used by AWS Lambda Function
+    Value: !GetAtt rLambdaExecutionRole.Arn
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","lambda-execution-role"]]
+  oDatabaseSecret:
+    Description: "Database secret with connection string"
+    Value: !Ref rDatabaseSecret
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","database-secret"]]

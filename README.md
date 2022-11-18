@@ -1,6 +1,6 @@
 ## parameters-secrets-lambda-extension-sample
 
-This project contains source code and supporting files for deploying resources described in following blog 
+This project contains source code and supporting files for deploying resources described in following blog: 
 
 **Using the AWS Parameter and Secrets Lambda extension to cache parameters and secrets**
 
@@ -23,7 +23,7 @@ Setting default arguments for 'sam deploy'
 ================================
 
 Stack Name [sam-app]: parameter-secrets-extension-blog-stack
-AWS Region [us-east-1]: <ENTER YOUR CHOICE OF REGION >
+AWS Region [us-east-1]: <ENTER YOUR CHOICE OF REGION>
 Parameter pVpcCIDR [172.31.0.0/16]: 
 Parameter pPublicSubnetCIDR [172.31.3.0/24]: 
 Parameter pPrivateSubnetACIDR [172.31.2.0/24]: 
